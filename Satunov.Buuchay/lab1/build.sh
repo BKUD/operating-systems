@@ -9,6 +9,8 @@ BUILD_DIR="build"
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
+trap 'rm -rf -- "$BUILD_DIR"' EXIT
+
 "$CXX" $CXXFLAGS \
     -Iinclude \
     src/config.cpp \
@@ -31,4 +33,6 @@ mkdir -p "$BUILD_DIR"
     src/cleaner.cpp \
     src/daemon.cpp \
     src/main.cpp \
-    -o daemon
+    -o "$BUILD_DIR/daemon"
+
+mv -fT -- "$BUILD_DIR/daemon" ./daemon

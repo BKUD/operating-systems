@@ -2,60 +2,64 @@
 
 #include <stdexcept>
 #include <string>
+#include <system_error>
 
 namespace fs = std::filesystem;
 
 namespace {
 
-    void clean_directory(
+void clean_directory(
     const fs::path& directory,
     int current_depth,
     int max_depth
 ) {
-        std::error_code error;
-        fs::directory_iterator iterator(directory, error);
+    std::error_code error;
+    fs::directory_iterator iterator(directory, error);
+
+    if (error) {
+        throw std::runtime_error(
+            "Cannot read directory: " + directory.string()
+        );
+    }
+
+    for (const fs::directory_entry& entry : iterator) {
+        const fs::file_status status = entry.symlink_status(error);
 
         if (error) {
             throw std::runtime_error(
-                "Cannot read directory: " + directory.string()
+                "Cannot inspect entry: " + entry.path().string()
             );
         }
 
-        for (const fs::directory_entry& entry : iterator) {
-            const fs::file_status status = entry.symlink_status(error);
+        if (fs::is_directory(status)) {
+            if (current_depth < max_depth) {
+                clean_directory(entry.path(), current_depth + 1, max_depth);
 
-            if (error) {
-                throw std::runtime_error(
-                    "Cannot inspect entry: " + entry.path().string()
-                );
-            }
-
-            if (fs::is_directory(status)) {
-                if (current_depth < max_depth) {
-                    clean_directory(
-                        entry.path(),
-                        current_depth + 1,
-                        max_depth
+                // После обхода удаляем опустевшую подпапку.
+                fs::remove(entry.path(), error);
+                if (error && error != std::errc::directory_not_empty) {
+                    throw fs::filesystem_error(
+                        "Cannot remove directory", entry.path(), error
                     );
                 }
-
-                continue;
             }
 
-            // Файлы непосредственно в folder сохраняются.
-            if (current_depth == 0) {
-                continue;
-            }
+            continue;
+        }
 
-            fs::remove(entry.path(), error);
+        // Файлы непосредственно в folder сохраняются.
+        if (current_depth == 0) {
+            continue;
+        }
 
-            if (error) {
-                throw std::runtime_error(
-                    "Cannot remove entry: " + entry.path().string()
-                );
-            }
+        fs::remove(entry.path(), error);
+        if (error) {
+            throw std::runtime_error(
+                "Cannot remove entry: " + entry.path().string()
+            );
         }
     }
+}
 
 } // namespace
 

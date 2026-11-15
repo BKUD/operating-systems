@@ -89,6 +89,8 @@ sleep 2
 assert_missing "$tree_two/level1/remove_after_reload.txt"
 
 old_pid="$pid"
+./build.sh
+[[ ! -e build ]]
 
 ./daemon "$TMP_DIR/config"
 

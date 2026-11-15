@@ -97,7 +97,12 @@ bool Daemon::is_our_process(pid_t pid) const {
             error
         );
 
-    return !error && current_executable == other_executable;
+    if (error) {
+    return false;
+	}
+
+	return other_executable == current_executable ||
+       	other_executable.native() == current_executable.native() + " (deleted)";
 }
 
 bool Daemon::stop_previous_instance() const {
