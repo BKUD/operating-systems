@@ -1,3 +1,4 @@
+
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -42,6 +43,19 @@ wait_for_pid() {
     return 1
 }
 
+wait_for_missing() {
+    for _ in {1..50}; do
+        if [[ ! -e "$1" ]]; then
+            return 0
+        fi
+
+        sleep 0.2
+    done
+
+    echo "Path should have been removed: $1" >&2
+    return 1
+}
+
 assert_exists() {
     [[ -e "$1" ]] || {
         echo "Expected path does not exist: $1" >&2
@@ -62,13 +76,9 @@ tree_one="$TMP_DIR/tree_one"
 tree_two="$TMP_DIR/tree_two"
 
 mkdir -p "$tree_one/level1/level2"
-mkdir -p "$tree_two/level1"
 
 touch "$tree_one/root.txt"
-touch "$tree_one/level1/remove.txt"
-touch "$tree_one/level1/level2/keep.txt"
-
-touch "$tree_two/level1/remove_after_reload.txt"
+touch "$tree_one/level1/level2/payload.txt"
 
 printf '%s 1\n' "$tree_one" > "$TMP_DIR/config"
 
@@ -77,18 +87,27 @@ cd "$LAB_DIR"
 
 pid="$(wait_for_pid)"
 
+wait_for_missing "$tree_one/level1"
 assert_exists "$tree_one/root.txt"
-assert_missing "$tree_one/level1/remove.txt"
-assert_exists "$tree_one/level1/level2/keep.txt"
 
-printf '%s 1\n' "$tree_two" > "$TMP_DIR/config"
+mkdir -p "$tree_two/level1/level2/level3"
+
+touch "$tree_two/root.txt"
+touch "$tree_two/level1/file1.txt"
+touch "$tree_two/level1/level2/file2.txt"
+touch "$tree_two/level1/level2/level3/payload.txt"
+
+printf '%s 2\n' "$tree_two" > "$TMP_DIR/config"
 kill -HUP "$pid"
 
-sleep 2
+wait_for_missing "$tree_two/level1/level2"
+wait_for_missing "$tree_two/level1/file1.txt"
 
-assert_missing "$tree_two/level1/remove_after_reload.txt"
+assert_exists "$tree_two/root.txt"
+assert_exists "$tree_two/level1"
 
 old_pid="$pid"
+
 ./build.sh
 [[ ! -e build ]]
 

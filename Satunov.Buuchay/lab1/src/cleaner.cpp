@@ -1,3 +1,4 @@
+
 #include "cleaner.hpp"
 
 #include <stdexcept>
@@ -32,20 +33,28 @@ void clean_directory(
         }
 
         if (fs::is_directory(status)) {
-            if (current_depth < max_depth) {
-                clean_directory(entry.path(), current_depth + 1, max_depth);
+    		const int entry_depth = current_depth + 1;
 
-                // После обхода удаляем опустевшую подпапку.
-                fs::remove(entry.path(), error);
-                if (error && error != std::errc::directory_not_empty) {
-                    throw fs::filesystem_error(
-                        "Cannot remove directory", entry.path(), error
-                    );
-                }
-            }
+    		if (entry_depth == max_depth) {
+        		fs::remove_all(entry.path(), error);
 
-            continue;
-        }
+        		if (error) {
+            		throw fs::filesystem_error(
+                		"Cannot remove directory",
+                		entry.path(),
+                		error
+            		);
+        		}
+    		} else if (entry_depth < max_depth) {
+        		clean_directory(
+            		entry.path(),
+            		entry_depth,
+            		max_depth
+        		);
+    		}
+
+    		continue;
+		}
 
         // Файлы непосредственно в folder сохраняются.
         if (current_depth == 0) {
@@ -53,6 +62,7 @@ void clean_directory(
         }
 
         fs::remove(entry.path(), error);
+
         if (error) {
             throw std::runtime_error(
                 "Cannot remove entry: " + entry.path().string()
