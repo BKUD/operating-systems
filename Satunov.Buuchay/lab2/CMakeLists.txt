@@ -142,3 +142,33 @@ if(BUILD_TESTING)
             PROPERTIES TIMEOUT 20
     )
 endif()
+
+if(BUILD_TESTING)
+    add_executable(fifo_tests
+            tests/test_fifo.cpp
+            src/conn_fifo.cpp
+            src/chat_message.cpp
+            src/process_manager.cpp
+    )
+
+    target_include_directories(fifo_tests
+            PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    )
+
+    target_link_libraries(fifo_tests
+            PRIVATE Threads::Threads
+    )
+
+    target_compile_options(fifo_tests
+            PRIVATE -Wall -Wextra -Werror
+    )
+
+    add_test(
+            NAME fifo_tests
+            COMMAND fifo_tests
+    )
+
+    set_tests_properties(fifo_tests
+            PROPERTIES TIMEOUT 15
+    )
+endif()
