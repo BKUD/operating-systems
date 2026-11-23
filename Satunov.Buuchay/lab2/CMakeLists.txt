@@ -110,3 +110,35 @@ if(BUILD_TESTING)
             PROPERTIES TIMEOUT 15
     )
 endif()
+
+if(BUILD_TESTING)
+    add_executable(mq_tests
+            tests/test_mq.cpp
+            src/conn_mq.cpp
+            src/chat_message.cpp
+            src/process_manager.cpp
+    )
+
+    target_include_directories(mq_tests
+            PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    )
+
+    target_link_libraries(mq_tests
+            PRIVATE
+            Threads::Threads
+            rt
+    )
+
+    target_compile_options(mq_tests
+            PRIVATE -Wall -Wextra -Werror
+    )
+
+    add_test(
+            NAME mq_tests
+            COMMAND mq_tests
+    )
+
+    set_tests_properties(mq_tests
+            PROPERTIES TIMEOUT 20
+    )
+endif()
