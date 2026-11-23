@@ -60,3 +60,23 @@ foreach(CONNECTION_SOURCE IN LISTS CONNECTION_SOURCES)
         )
     endif()
 endforeach()
+
+if(BUILD_TESTING)
+    add_executable(chat_message_tests
+            tests/test_chat_message.cpp
+            src/chat_message.cpp
+    )
+
+    target_include_directories(chat_message_tests
+            PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    )
+
+    target_compile_options(chat_message_tests
+            PRIVATE -Wall -Wextra -Werror
+    )
+
+    add_test(
+            NAME chat_message_tests
+            COMMAND chat_message_tests
+    )
+endif()
