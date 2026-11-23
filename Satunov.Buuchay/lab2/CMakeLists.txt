@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
+find_package(Threads REQUIRED)
 
 include(CTest)
 
@@ -42,6 +43,7 @@ foreach(CONNECTION_SOURCE IN LISTS CONNECTION_SOURCES)
 
     target_link_libraries(${TARGET_NAME}
             PRIVATE Qt6::Widgets
+            Threads::Threads
     )
 
     target_compile_options(${TARGET_NAME}
@@ -78,5 +80,33 @@ if(BUILD_TESTING)
     add_test(
             NAME chat_message_tests
             COMMAND chat_message_tests
+    )
+endif()
+
+if(BUILD_TESTING)
+    add_executable(process_manager_tests
+            tests/test_process_manager.cpp
+            src/process_manager.cpp
+    )
+
+    target_include_directories(process_manager_tests
+            PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    )
+
+    target_link_libraries(process_manager_tests
+            PRIVATE Threads::Threads
+    )
+
+    target_compile_options(process_manager_tests
+            PRIVATE -Wall -Wextra -Werror
+    )
+
+    add_test(
+            NAME process_manager_tests
+            COMMAND process_manager_tests
+    )
+
+    set_tests_properties(process_manager_tests
+            PROPERTIES TIMEOUT 15
     )
 endif()
