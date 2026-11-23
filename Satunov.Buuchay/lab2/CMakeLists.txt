@@ -172,3 +172,33 @@ if(BUILD_TESTING)
             PROPERTIES TIMEOUT 15
     )
 endif()
+
+if(BUILD_TESTING)
+    add_executable(sock_tests
+            tests/test_sock.cpp
+            src/conn_sock.cpp
+            src/chat_message.cpp
+            src/process_manager.cpp
+    )
+
+    target_include_directories(sock_tests
+            PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    )
+
+    target_link_libraries(sock_tests
+            PRIVATE Threads::Threads
+    )
+
+    target_compile_options(sock_tests
+            PRIVATE -Wall -Wextra -Werror
+    )
+
+    add_test(
+            NAME sock_tests
+            COMMAND sock_tests
+    )
+
+    set_tests_properties(sock_tests
+            PROPERTIES TIMEOUT 20
+    )
+endif()
