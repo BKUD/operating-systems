@@ -223,3 +223,29 @@ if(BUILD_TESTING)
             COMMAND chat_session_tests
     )
 endif()
+
+if(BUILD_TESTING)
+    add_executable(chat_endpoint_tests
+            tests/test_chat_endpoint.cpp
+            src/chat_endpoint.cpp
+            src/chat_session.cpp
+            src/chat_message.cpp
+    )
+
+    target_include_directories(chat_endpoint_tests
+            PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    )
+
+    target_link_libraries(chat_endpoint_tests
+            PRIVATE Threads::Threads
+    )
+
+    target_compile_options(chat_endpoint_tests
+            PRIVATE -Wall -Wextra -Werror
+    )
+
+    add_test(
+            NAME chat_endpoint_tests
+            COMMAND chat_endpoint_tests
+    )
+endif()

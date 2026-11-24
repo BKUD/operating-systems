@@ -75,8 +75,8 @@ bool wait_ready(int fd, short events, Deadline deadline) {
         }
 
         if ((descriptor.revents & (POLLERR | POLLHUP)) != 0) {
-            return false;
-        }
+    		return (events & POLLIN) != 0;
+		}
     }
 }
 
@@ -123,17 +123,32 @@ bool connect_client(int fd, const sockaddr_un& address,
     }
 }
 
-bool receive_exact(int fd, std::uint8_t* data,
-                   std::size_t size, Deadline deadline) {
+enum class ReceiveState {
+    Complete,
+    TimedOut,
+    Disconnected
+};
+
+ReceiveState receive_exact(
+    int fd,
+    std::uint8_t* data,
+    std::size_t size,
+    Deadline deadline
+) {
     std::size_t offset = 0;
 
     while (offset < size) {
         if (!wait_ready(fd, POLLIN, deadline)) {
-            return false;
+            return offset == 0
+                ? ReceiveState::TimedOut
+                : ReceiveState::Disconnected;
         }
 
         const ssize_t count = ::recv(
-            fd, data + offset, size - offset, 0
+            fd,
+            data + offset,
+            size - offset,
+            0
         );
 
         if (count > 0) {
@@ -142,10 +157,11 @@ bool receive_exact(int fd, std::uint8_t* data,
         }
 
         if (count == 0) {
-            return false;
+            return ReceiveState::Disconnected;
         }
 
-        if (errno == EINTR || errno == EAGAIN ||
+        if (errno == EINTR ||
+            errno == EAGAIN ||
             errno == EWOULDBLOCK) {
             continue;
         }
@@ -153,7 +169,7 @@ bool receive_exact(int fd, std::uint8_t* data,
         fail("recv(socket)");
     }
 
-    return true;
+    return ReceiveState::Complete;
 }
 
 bool send_all(int fd, const std::uint8_t* data,
@@ -353,14 +369,23 @@ bool SocketConnection::read(
 
     std::array<std::uint8_t, 4> header{};
 
-    if (!receive_exact(
-            connection_fd_,
-            header.data(),
-            header.size(),
-            deadline
-        )) {
-        disconnect();
+    const auto header_result = receive_exact(
+        connection_fd_,
+        header.data(),
+        header.size(),
+        deadline
+    );
+
+    if (header_result == ReceiveState::TimedOut) {
+        // No message arrived, but the connection stays open.
         return false;
+    }
+
+    if (header_result != ReceiveState::Complete) {
+        disconnect();
+        throw std::runtime_error(
+            "socket disconnected while reading header"
+        );
     }
 
     const std::uint32_t length =
@@ -371,20 +396,27 @@ bool SocketConnection::read(
 
     if (length == 0 || length > kMaxFrameBytes) {
         disconnect();
-        throw std::runtime_error("invalid socket frame length");
+        throw std::runtime_error(
+            "invalid socket frame length"
+        );
     }
 
     frame.resize(length);
 
-    if (!receive_exact(
-            connection_fd_,
-            frame.data(),
-            frame.size(),
-            deadline
-        )) {
+    const auto body_result = receive_exact(
+        connection_fd_,
+        frame.data(),
+        frame.size(),
+        deadline
+    );
+
+    if (body_result != ReceiveState::Complete) {
         frame.clear();
         disconnect();
-        return false;
+
+        throw std::runtime_error(
+            "socket disconnected or timed out during frame"
+        );
     }
 
     return true;

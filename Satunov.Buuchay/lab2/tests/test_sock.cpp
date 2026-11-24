@@ -266,6 +266,47 @@ void test_maximum_message() {
     );
 }
 
+    void test_idle_connection_survives() {
+    const pid_t host_pid = getpid();
+
+    SocketConnection host(host_pid, true);
+    SocketConnection client(host_pid, false);
+
+    std::vector<std::uint8_t> frame;
+
+    require(
+        !host.read(frame),
+        "idle socket read must time out"
+    );
+
+    const chat::ChatMessage message{
+        chat::MessageKind::Broadcast,
+        chat::Participant::Client,
+        chat::Participant::All,
+        123,
+        "Message after idle timeout"
+    };
+
+    const auto bytes = chat::serialize(message);
+
+    require(
+        bytes && client.write(*bytes),
+        "client can send after idle timeout"
+    );
+
+    require(
+        host.read(frame),
+        "host receives message after idle timeout"
+    );
+
+    const auto received = chat::deserialize(frame);
+
+    require(
+        received && *received == message,
+        "connection preserved the message"
+    );
+}
+
 } // namespace
 
 int main() {
@@ -273,6 +314,7 @@ int main() {
         test_exchange_and_cleanup();
         test_accept_timeout();
         test_maximum_message();
+        test_idle_connection_survives();
 
         std::cout << "Socket integration tests passed\n";
         return 0;
