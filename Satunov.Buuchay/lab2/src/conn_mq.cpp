@@ -141,6 +141,9 @@ void MqConnection::cleanup() noexcept {
 bool MqConnection::read(
     std::vector<std::uint8_t>& frame
 ) {
+
+    frame.clear();
+
     std::array<std::uint8_t, kMaxFrameBytes> buffer{};
     const timespec deadline = deadline_in_five_seconds();
 

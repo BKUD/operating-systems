@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+class SharedSemaphores;
+
 namespace chat {
 
     class ChatEndpoint {
@@ -18,7 +20,8 @@ namespace chat {
         ChatEndpoint(
             Conn& connection,
             Participant local,
-            TimePoint started_at = Clock::now()
+            TimePoint started_at = Clock::now(),
+            SharedSemaphores* sync = nullptr
         );
 
         [[nodiscard]] bool send(
@@ -44,6 +47,7 @@ namespace chat {
 
         mutable std::mutex mutex_;
         ChatSession session_;
+        SharedSemaphores* sync_{nullptr};
     };
 
 } // namespace chat

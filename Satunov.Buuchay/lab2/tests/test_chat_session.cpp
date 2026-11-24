@@ -1,11 +1,13 @@
 #include "chat_session.h"
 
 #include <chrono>
+#include <cstdint>
 #include <exception>
 #include <iostream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 
 using namespace std::chrono_literals;
 

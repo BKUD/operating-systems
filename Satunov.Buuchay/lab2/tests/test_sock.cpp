@@ -10,6 +10,11 @@
 #include <string_view>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <atomic>
+#include <chrono>
+#include <cstdint>
+#include <thread>
+#include <vector>
 
 namespace {
 
@@ -307,6 +312,74 @@ void test_maximum_message() {
     );
 }
 
+    void test_concurrent_read_and_write() {
+    SocketConnection host(getpid(), true);
+    SocketConnection client(getpid(), false);
+
+    std::atomic<bool> receiver_started{false};
+    std::atomic<bool> receiver_got_reply{false};
+
+    std::jthread receiver([&] {
+        receiver_started.store(true);
+
+        std::vector<std::uint8_t> frame;
+
+        try {
+            receiver_got_reply.store(
+                host.read(frame) &&
+                frame == std::vector<std::uint8_t>{4, 5, 6}
+            );
+        } catch (...) {
+            receiver_got_reply.store(false);
+        }
+    });
+
+    while (!receiver_started.load()) {
+        std::this_thread::yield();
+    }
+
+    std::this_thread::sleep_for(
+        std::chrono::milliseconds(50)
+    );
+
+    const std::array<std::uint8_t, 3> request{1, 2, 3};
+
+    const auto started =
+        std::chrono::steady_clock::now();
+
+    const bool sent = host.write(request);
+
+    const auto elapsed =
+        std::chrono::steady_clock::now() - started;
+
+    std::vector<std::uint8_t> received;
+
+    const bool client_got_request =
+        client.read(received);
+
+    const std::array<std::uint8_t, 3> reply{4, 5, 6};
+
+    const bool replied = client.write(reply);
+
+    receiver.join();
+
+    require(
+        sent && elapsed < std::chrono::seconds(2),
+        "sending must not wait for a concurrent read timeout"
+    );
+
+    require(
+        client_got_request &&
+        received == std::vector<std::uint8_t>{1, 2, 3},
+        "client receives the concurrent message"
+    );
+
+    require(
+        replied && receiver_got_reply.load(),
+        "host receives the reply concurrently"
+    );
+}
+
 } // namespace
 
 int main() {
@@ -315,6 +388,7 @@ int main() {
         test_accept_timeout();
         test_maximum_message();
         test_idle_connection_survives();
+        test_concurrent_read_and_write();
 
         std::cout << "Socket integration tests passed\n";
         return 0;

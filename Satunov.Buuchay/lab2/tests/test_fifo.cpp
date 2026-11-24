@@ -4,10 +4,14 @@
 
 #include <array>
 #include <cerrno>
+#include <cstdint>
+#include <fcntl.h>
 #include <iostream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
+
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -183,12 +187,57 @@ void test_read_timeout() {
     );
 }
 
+void test_partial_frame_rejected() {
+    const pid_t host_pid = getpid();
+
+    FifoConnection host(host_pid, true);
+
+    const std::string path =
+        "/tmp/lab2_fifo_" +
+        std::to_string(getuid()) + "_" +
+        std::to_string(host_pid) + "_c2h";
+
+    const int writer = open(
+        path.c_str(),
+        O_WRONLY | O_NONBLOCK
+    );
+
+    require(writer != -1, "open FIFO writer");
+
+    const std::array<std::uint8_t, 2> partial{0, 0};
+
+    const ssize_t written = write(
+        writer,
+        partial.data(),
+        partial.size()
+    );
+
+    close(writer);
+
+    require(written == 2, "write partial header");
+
+    std::vector<std::uint8_t> frame;
+    bool rejected = false;
+
+    try {
+        (void)host.read(frame);
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+
+    require(
+        rejected,
+        "partial FIFO header must cause an error"
+    );
+}
+
 } // namespace
 
 int main() {
     try {
         test_exchange_and_cleanup();
         test_read_timeout();
+        test_partial_frame_rejected();
 
         std::cout << "FIFO integration tests passed\n";
         return 0;

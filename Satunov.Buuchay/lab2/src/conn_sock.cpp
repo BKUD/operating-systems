@@ -5,6 +5,7 @@
 #include "connection_factory.h"
 
 #include <memory>
+#include <mutex>
 #include <array>
 #include <cerrno>
 #include <chrono>
@@ -27,6 +28,20 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 using Deadline = Clock::time_point;
+
+class ScopedFd final {
+public:
+    explicit ScopedFd(int fd) noexcept : fd_(fd) {}
+    ~ScopedFd() { if (fd_ != -1) { ::close(fd_); } }
+
+    ScopedFd(const ScopedFd&) = delete;
+    ScopedFd& operator=(const ScopedFd&) = delete;
+
+    [[nodiscard]] int get() const noexcept { return fd_; }
+
+private:
+    int fd_;
+};
 
 constexpr auto kTimeout = std::chrono::seconds(5);
 
@@ -77,8 +92,8 @@ bool wait_ready(int fd, short events, Deadline deadline) {
         }
 
         if ((descriptor.revents & (POLLERR | POLLHUP)) != 0) {
-    		return (events & POLLIN) != 0;
-		}
+           return (events & POLLIN) != 0;
+       }
     }
 }
 
@@ -297,28 +312,61 @@ SocketConnection::~SocketConnection() {
     cleanup();
 }
 
-void SocketConnection::disconnect() noexcept {
+void SocketConnection::disconnect_locked() noexcept {
+    disconnected_ = true;
+
     if (connection_fd_ != -1) {
-        close(connection_fd_);
+        // shutdown() affects other descriptors that refer to this socket.
+        // It wakes a concurrent read/write using a duplicate descriptor.
+        ::shutdown(connection_fd_, SHUT_RDWR);
+        ::close(connection_fd_);
         connection_fd_ = -1;
     }
 }
 
+void SocketConnection::disconnect() noexcept {
+    std::lock_guard lock(state_mutex_);
+    disconnect_locked();
+}
+
 void SocketConnection::cleanup() noexcept {
-    disconnect();
+    std::lock_guard lock(state_mutex_);
+    disconnect_locked();
 
     if (listen_fd_ != -1) {
-        close(listen_fd_);
+        ::close(listen_fd_);
         listen_fd_ = -1;
     }
 
     if (owns_path_) {
-        unlink(socket_path_.c_str());
+        ::unlink(socket_path_.c_str());
         owns_path_ = false;
     }
 }
 
+int SocketConnection::acquire_fd(Deadline deadline) {
+    std::lock_guard lock(state_mutex_);
+
+    if (!ensure_connected(deadline)) {
+        return -1;
+    }
+
+    // An operation owns its own descriptor until it completes.
+    // Another thread may disconnect the original safely.
+    const int copy = ::fcntl(connection_fd_, F_DUPFD_CLOEXEC, 0);
+
+    if (copy == -1) {
+        fail("fcntl(F_DUPFD_CLOEXEC)");
+    }
+
+    return copy;
+}
+
 bool SocketConnection::ensure_connected(Deadline deadline) {
+    if (disconnected_) {
+        return false;
+    }
+
     if (connection_fd_ != -1) {
         return true;
     }
@@ -361,67 +409,65 @@ bool SocketConnection::ensure_connected(Deadline deadline) {
 bool SocketConnection::read(
     std::vector<std::uint8_t>& frame
 ) {
+    std::lock_guard read_lock(read_mutex_);
     frame.clear();
 
     const Deadline deadline = Clock::now() + kTimeout;
+    const int fd = acquire_fd(deadline);
 
-    if (!ensure_connected(deadline)) {
+    if (fd == -1) {
         return false;
     }
 
-    std::array<std::uint8_t, 4> header{};
+    const ScopedFd socket(fd);
 
-    const auto header_result = receive_exact(
-        connection_fd_,
-        header.data(),
-        header.size(),
-        deadline
-    );
+    try {
+        std::array<std::uint8_t, 4> header{};
 
-    if (header_result == ReceiveState::TimedOut) {
-        // No message arrived, but the connection stays open.
-        return false;
-    }
-
-    if (header_result != ReceiveState::Complete) {
-        disconnect();
-        throw std::runtime_error(
-            "socket disconnected while reading header"
+        const auto header_result = receive_exact(
+            socket.get(), header.data(), header.size(), deadline
         );
-    }
 
-    const std::uint32_t length =
-        (static_cast<std::uint32_t>(header[0]) << 24) |
-        (static_cast<std::uint32_t>(header[1]) << 16) |
-        (static_cast<std::uint32_t>(header[2]) << 8) |
-        static_cast<std::uint32_t>(header[3]);
+        if (header_result == ReceiveState::TimedOut) {
+            // No bytes consumed: the connection stays open.
+            return false;
+        }
 
-    if (length == 0 || length > kMaxFrameBytes) {
-        disconnect();
-        throw std::runtime_error(
-            "invalid socket frame length"
+        if (header_result != ReceiveState::Complete) {
+            throw std::runtime_error(
+                "socket disconnected while reading header"
+            );
+        }
+
+        const std::uint32_t length =
+            (static_cast<std::uint32_t>(header[0]) << 24) |
+            (static_cast<std::uint32_t>(header[1]) << 16) |
+            (static_cast<std::uint32_t>(header[2]) << 8) |
+            static_cast<std::uint32_t>(header[3]);
+
+        if (length == 0 || length > kMaxFrameBytes) {
+            throw std::runtime_error("invalid socket frame length");
+        }
+
+        frame.resize(length);
+
+        const auto body_result = receive_exact(
+            socket.get(), frame.data(), frame.size(), deadline
         );
-    }
 
-    frame.resize(length);
+        if (body_result != ReceiveState::Complete) {
+            frame.clear();
+            throw std::runtime_error(
+                "socket disconnected or timed out during frame"
+            );
+        }
 
-    const auto body_result = receive_exact(
-        connection_fd_,
-        frame.data(),
-        frame.size(),
-        deadline
-    );
+        return true;
 
-    if (body_result != ReceiveState::Complete) {
-        frame.clear();
+    } catch (...) {
         disconnect();
-
-        throw std::runtime_error(
-            "socket disconnected or timed out during frame"
-        );
+        throw;
     }
-
-    return true;
 }
 
 bool SocketConnection::write(
@@ -431,12 +477,15 @@ bool SocketConnection::write(
         return false;
     }
 
+    std::lock_guard write_lock(write_mutex_);
     const Deadline deadline = Clock::now() + kTimeout;
+    const int fd = acquire_fd(deadline);
 
-    if (!ensure_connected(deadline)) {
+    if (fd == -1) {
         return false;
     }
 
+    const ScopedFd socket(fd);
     const auto size = static_cast<std::uint32_t>(frame.size());
 
     const std::array<std::uint8_t, 4> header{
@@ -446,25 +495,25 @@ bool SocketConnection::write(
         static_cast<std::uint8_t>(size)
     };
 
-    const bool sent =
-        send_all(
-            connection_fd_,
-            header.data(),
-            header.size(),
-            deadline
-        ) &&
-        send_all(
-            connection_fd_,
-            frame.data(),
-            frame.size(),
-            deadline
-        );
+    try {
+        const bool sent =
+            send_all(
+                socket.get(), header.data(), header.size(), deadline
+            ) &&
+            send_all(
+                socket.get(), frame.data(), frame.size(), deadline
+            );
 
-    if (!sent) {
+        if (!sent) {
+            disconnect();
+        }
+
+        return sent;
+
+    } catch (...) {
         disconnect();
+        throw;
     }
-
-    return sent;
 }
 
 std::unique_ptr<Conn>

@@ -1,3 +1,4 @@
+
 cmake_minimum_required(VERSION 3.22)
 
 project(lab2_chat LANGUAGES CXX)
@@ -21,6 +22,7 @@ file(GLOB CONNECTION_SOURCES CONFIGURE_DEPENDS
 
 list(REMOVE_ITEM SOURCES ${CONNECTION_SOURCES})
 
+# Automatically create one host executable per IPC transport.
 foreach(CONNECTION_SOURCE IN LISTS CONNECTION_SOURCES)
     get_filename_component(CONNECTION_NAME
             "${CONNECTION_SOURCE}" NAME_WE
@@ -42,9 +44,12 @@ foreach(CONNECTION_SOURCE IN LISTS CONNECTION_SOURCES)
     )
 
     target_link_libraries(${TARGET_NAME}
-            PRIVATE Qt6::Widgets
-            Threads::Threads
+            PRIVATE Qt6::Widgets Threads::Threads
     )
+
+    if(CONNECTION_CODE STREQUAL "mq")
+        target_link_libraries(${TARGET_NAME} PRIVATE rt)
+    endif()
 
     target_compile_options(${TARGET_NAME}
             PRIVATE -Wall -Wextra -Werror
@@ -69,10 +74,10 @@ foreach(CONNECTION_SOURCE IN LISTS CONNECTION_SOURCES)
         set_tests_properties("e2e_${CONNECTION_CODE}"
                 PROPERTIES TIMEOUT 15
         )
-
     endif()
 endforeach()
 
+# Message serialization tests.
 if(BUILD_TESTING)
     add_executable(chat_message_tests
             tests/test_chat_message.cpp
@@ -93,6 +98,7 @@ if(BUILD_TESTING)
     )
 endif()
 
+# Process management and semaphore tests.
 if(BUILD_TESTING)
     add_executable(process_manager_tests
             tests/test_process_manager.cpp
@@ -117,11 +123,11 @@ if(BUILD_TESTING)
     )
 
     set_tests_properties(process_manager_tests
-            PROPERTIES TIMEOUT 15
+            PROPERTIES TIMEOUT 20
     )
 endif()
 
-
+# Named pipe tests.
 if(BUILD_TESTING)
     add_executable(fifo_tests
             tests/test_fifo.cpp
@@ -152,6 +158,7 @@ if(BUILD_TESTING)
     )
 endif()
 
+# Unix domain socket tests.
 if(BUILD_TESTING)
     add_executable(sock_tests
             tests/test_sock.cpp
@@ -182,6 +189,7 @@ if(BUILD_TESTING)
     )
 endif()
 
+# Chat session tests.
 if(BUILD_TESTING)
     add_executable(chat_session_tests
             tests/test_chat_session.cpp
@@ -203,12 +211,14 @@ if(BUILD_TESTING)
     )
 endif()
 
+# Chat endpoint tests.
 if(BUILD_TESTING)
     add_executable(chat_endpoint_tests
             tests/test_chat_endpoint.cpp
             src/chat_endpoint.cpp
             src/chat_session.cpp
             src/chat_message.cpp
+            src/process_manager.cpp
     )
 
     target_include_directories(chat_endpoint_tests
@@ -229,6 +239,7 @@ if(BUILD_TESTING)
     )
 endif()
 
+# POSIX message queue tests.
 if(BUILD_TESTING)
     add_executable(mq_tests
             tests/test_mq.cpp

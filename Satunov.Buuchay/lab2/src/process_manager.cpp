@@ -14,6 +14,9 @@
 struct SharedSemaphores::State {
     sem_t host;
     sem_t client;
+
+    sem_t host_write;
+    sem_t client_write;
 };
 
 namespace {
@@ -98,6 +101,37 @@ SharedSemaphores::SharedSemaphores()
             error, std::generic_category(), "sem_init(client)"
         );
     }
+
+    if (sem_init(&state_->host_write, 1, 1) == -1) {
+        const int error = errno;
+
+        sem_destroy(&state_->client);
+        sem_destroy(&state_->host);
+        munmap(state_, sizeof(State));
+        state_ = nullptr;
+
+        throw std::system_error(
+            error,
+            std::generic_category(),
+            "sem_init(host_write)"
+        );
+    }
+
+    if (sem_init(&state_->client_write, 1, 1) == -1) {
+        const int error = errno;
+
+        sem_destroy(&state_->host_write);
+        sem_destroy(&state_->client);
+        sem_destroy(&state_->host);
+        munmap(state_, sizeof(State));
+        state_ = nullptr;
+
+        throw std::system_error(
+            error,
+            std::generic_category(),
+            "sem_init(client_write)"
+        );
+    }
 }
 
 SharedSemaphores::~SharedSemaphores() {
@@ -106,6 +140,8 @@ SharedSemaphores::~SharedSemaphores() {
     }
 
     if (getpid() == creator_pid_) {
+        sem_destroy(&state_->client_write);
+        sem_destroy(&state_->host_write);
         sem_destroy(&state_->client);
         sem_destroy(&state_->host);
     }
@@ -232,4 +268,20 @@ std::optional<int> ChildProcess::try_wait() {
 
     pid_ = -1;
     return status;
+}
+
+bool SharedSemaphores::wait_for_host_write() const {
+    return wait_with_timeout(&state_->host_write);
+}
+
+bool SharedSemaphores::wait_for_client_write() const {
+    return wait_with_timeout(&state_->client_write);
+}
+
+void SharedSemaphores::acknowledge_host_message() const {
+    post(&state_->host_write);
+}
+
+void SharedSemaphores::acknowledge_client_message() const {
+    post(&state_->client_write);
 }

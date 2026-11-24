@@ -18,6 +18,14 @@ public:
     [[nodiscard]] bool wait_for_host() const;
     [[nodiscard]] bool wait_for_client() const;
 
+    // The sender waits for permission to write the next message.
+    [[nodiscard]] bool wait_for_host_write() const;
+    [[nodiscard]] bool wait_for_client_write() const;
+
+    // The receiver confirms that the message has been read.
+    void acknowledge_host_message() const;
+    void acknowledge_client_message() const;
+
 private:
     struct State;
 

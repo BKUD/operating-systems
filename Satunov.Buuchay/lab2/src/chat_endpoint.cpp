@@ -1,4 +1,5 @@
 #include "chat_endpoint.h"
+#include "process_manager.h"
 
 #include <chrono>
 #include <cstdint>
@@ -27,14 +28,16 @@ std::uint64_t current_timestamp_ms() {
 ChatEndpoint::ChatEndpoint(
     Conn& connection,
     Participant local,
-    TimePoint started_at
+    TimePoint started_at,
+    SharedSemaphores* sync
 )
     : connection_(connection),
       local_(local),
       peer_(local == Participant::Host
                 ? Participant::Client
                 : Participant::Host),
-      session_(started_at) {
+      session_(started_at),
+      sync_(sync) {
 
     if (local != Participant::Host &&
         local != Participant::Client) {
@@ -67,7 +70,26 @@ bool ChatEndpoint::send(
         return false;
     }
 
+    if (sync_ != nullptr) {
+        const bool permitted =
+            local_ == Participant::Host
+                ? sync_->wait_for_host_write()
+                : sync_->wait_for_client_write();
+
+        if (!permitted) {
+            throw std::runtime_error(
+                "IPC semaphore wait timed out after 5 seconds"
+            );
+        }
+    }
+
     if (!connection_.write(*bytes)) {
+        if (sync_ != nullptr) {
+            throw std::runtime_error(
+                "IPC message write failed or timed out"
+            );
+        }
+
         return false;
     }
 
@@ -117,6 +139,14 @@ std::optional<ChatMessage> ChatEndpoint::receive() {
             throw std::runtime_error(
                 "failed to store received message"
             );
+        }
+    }
+
+    if (sync_ != nullptr) {
+        if (peer_ == Participant::Host) {
+            sync_->acknowledge_host_message();
+        } else {
+            sync_->acknowledge_client_message();
         }
     }
 

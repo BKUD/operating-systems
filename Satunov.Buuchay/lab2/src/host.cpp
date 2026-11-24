@@ -1,3 +1,4 @@
+
 #include "chat_endpoint.h"
 #include "chat_window.h"
 #include "connection_factory.h"
@@ -7,14 +8,19 @@
 #include <QApplication>
 
 #include <atomic>
+#include <cerrno>
 #include <csignal>
 #include <exception>
 #include <iostream>
 #include <mutex>
+#include <poll.h>
 #include <stdexcept>
+#include <stop_token>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <thread>
+#include <utility>
 
 #include <sys/wait.h>
 #include <unistd.h>
@@ -34,12 +40,15 @@ int child_main(void* raw_context) {
             return 11;
         }
 
-        // The client opens its IPC resources after fork().
+        // Open the transport in the child after fork().
         auto connection = make_connection(getppid(), false);
 
+        // Both processes must use the same shared semaphores.
         chat::ChatEndpoint endpoint(
             *connection,
-            chat::Participant::Client
+            chat::Participant::Client,
+            chat::ChatEndpoint::Clock::now(),
+            context.sync
         );
 
         context.sync->notify_host();
@@ -52,10 +61,14 @@ int child_main(void* raw_context) {
         }
 
         if (context.self_test) {
-            const auto request = endpoint.receive();
+            for (const std::string_view expected :
+                 {"ping", "ping2"}) {
 
-            if (!request || request->text != "ping") {
-                return 13;
+                const auto request = endpoint.receive();
+
+                if (!request || request->text != expected) {
+                    return 13;
+                }
             }
 
             return endpoint.send(
@@ -67,8 +80,7 @@ int child_main(void* raw_context) {
         std::atomic<bool> running{true};
         std::mutex output_mutex;
 
-        // Incoming messages are received independently
-        // of terminal input.
+        // Receive incoming messages independently of stdin.
         std::jthread receiver(
             [&](std::stop_token stop) {
                 while (!stop.stop_requested() &&
@@ -121,7 +133,52 @@ int child_main(void* raw_context) {
 
         std::string line;
 
-        while (running.load() && std::getline(std::cin, line)) {
+        while (running.load()) {
+            pollfd input_descriptor{
+                STDIN_FILENO,
+                POLLIN,
+                0
+            };
+
+            const int ready = ::poll(
+                &input_descriptor,
+                1,
+                200
+            );
+
+            if (ready == -1) {
+                if (errno == EINTR) {
+                    continue;
+                }
+
+                throw std::system_error(
+                    errno,
+                    std::generic_category(),
+                    "poll(stdin)"
+                );
+            }
+
+            if (ready == 0) {
+                continue;
+            }
+
+            if ((input_descriptor.revents &
+                 (POLLERR | POLLNVAL)) != 0) {
+                break;
+            }
+
+            if ((input_descriptor.revents & POLLIN) == 0) {
+                if ((input_descriptor.revents & POLLHUP) != 0) {
+                    break;
+                }
+
+                continue;
+            }
+
+            if (!std::getline(std::cin, line)) {
+                break;
+            }
+
             if (line == "/quit") {
                 break;
             }
@@ -145,8 +202,7 @@ int child_main(void* raw_context) {
             std::lock_guard lock(output_mutex);
 
             if (!sent) {
-                std::cout
-                    << "Message was not sent.\n";
+                std::cout << "Message was not sent.\n";
             }
 
             std::cout << "> " << std::flush;
@@ -168,18 +224,18 @@ int child_main(void* raw_context) {
 }
 
 int run_host(int argc, char* argv[], bool self_test) {
-    // Create shared semaphores before fork().
+    // Shared semaphores must be initialized before fork().
     SharedSemaphores sync;
 
     ChildContext context{&sync, self_test};
 
-    // Fork before creating QApplication or starting threads.
+    // Fork before QApplication and worker threads.
     auto child = ChildProcess::spawn(
         child_main,
         &context
     );
 
-    // The host creates transport resources after fork().
+    // Create host transport resources after fork().
     auto connection = make_connection(getpid(), true);
 
     sync.notify_client();
@@ -192,11 +248,12 @@ int run_host(int argc, char* argv[], bool self_test) {
 
     chat::ChatEndpoint endpoint(
         *connection,
-        chat::Participant::Host
+        chat::Participant::Host,
+        chat::ChatEndpoint::Clock::now(),
+        &sync
     );
 
-    // Bootstrap message also establishes the accepted
-    // connection for the Unix domain socket transport.
+    // Receive the initial client handshake.
     const auto greeting = endpoint.receive();
 
     if (!greeting ||
@@ -208,12 +265,18 @@ int run_host(int argc, char* argv[], bool self_test) {
     }
 
     if (self_test) {
+        // The second send requires an acknowledgment
+        // from the client for the first message.
         if (!endpoint.send(
                 chat::MessageKind::Broadcast,
                 "ping"
+            ) ||
+            !endpoint.send(
+                chat::MessageKind::Broadcast,
+                "ping2"
             )) {
             throw std::runtime_error(
-                "self-test ping failed"
+                "self-test messages failed"
             );
         }
 
@@ -237,15 +300,14 @@ int run_host(int argc, char* argv[], bool self_test) {
         return 0;
     }
 
-    // QApplication is initialized only in the host,
-    // after the child has already been created.
+    // Only the parent process creates the Qt application.
     QApplication app(argc, argv);
 
     std::atomic<bool> connected{true};
     std::mutex error_mutex;
     std::string error_text;
 
-    // Blocking IPC reads must not freeze the Qt event loop.
+    // Read IPC messages without blocking the Qt event loop.
     std::jthread receiver(
         [&](std::stop_token stop) {
             while (!stop.stop_requested() &&
@@ -294,8 +356,9 @@ int run_host(int argc, char* argv[], bool self_test) {
 
 int main(int argc, char* argv[]) {
     const std::string_view mode =
-        argc == 2 ? std::string_view(argv[1])
-                  : std::string_view{};
+        argc == 2
+            ? std::string_view(argv[1])
+            : std::string_view{};
 
     if (mode == "--transport") {
         std::cout

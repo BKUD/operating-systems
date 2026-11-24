@@ -114,6 +114,17 @@ void ChatWindow::disconnect_client(const QString& reason) {
 
     disconnected_shown_ = true;
 
+    if (child_.pid() > 0) {
+        try {
+            child_.terminate(SIGKILL);
+        } catch (const std::exception& error) {
+            events_->appendPlainText(
+                QString("Ошибка остановки клиента: %1")
+                    .arg(QString::fromUtf8(error.what()))
+            );
+        }
+    }
+
     input_->setEnabled(false);
     message_type_->setEnabled(false);
     send_button_->setEnabled(false);
@@ -208,21 +219,11 @@ void ChatWindow::refresh() {
     if (connected_.load() &&
         endpoint_.client_timed_out()) {
 
-        try {
-            child_.terminate(SIGKILL);
-
-            disconnect_client(
-                "Клиент завершён через SIGKILL: "
-                "60 секунд без сообщений."
-            );
-
-        } catch (const std::exception& error) {
-            disconnect_client(
-                QString("Ошибка завершения клиента: %1")
-                    .arg(QString::fromUtf8(error.what()))
-            );
+        disconnect_client(
+            "Клиент отключён: "
+            "60 секунд без сообщений."
+        );
         }
-    }
 
     if (child_.pid() > 0) {
         try {

@@ -76,6 +76,36 @@ namespace {
         );
     }
 
+    void test_message_write_ordering() {
+        SharedSemaphores sync;
+
+        require(
+            sync.wait_for_host_write(),
+            "host can send the first message"
+        );
+
+        require(
+            !sync.wait_for_host_write(),
+            "host cannot send again without acknowledgment"
+        );
+
+        sync.acknowledge_host_message();
+
+        require(
+            sync.wait_for_host_write(),
+            "host can send after client acknowledgment"
+        );
+
+        sync.acknowledge_host_message();
+
+        require(
+            sync.wait_for_client_write(),
+            "client has an independent write permission"
+        );
+
+        sync.acknowledge_client_message();
+    }
+
 } // namespace
 
 int main() {
@@ -83,6 +113,7 @@ int main() {
         test_fork_and_semaphores();
         test_sigkill();
         test_semaphore_timeout();
+        test_message_write_ordering();
 
         std::cout << "All process manager tests passed\n";
         return 0;

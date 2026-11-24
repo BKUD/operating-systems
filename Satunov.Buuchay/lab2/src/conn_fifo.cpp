@@ -72,7 +72,7 @@ bool wait_ready(int fd, short events, Deadline deadline) {
         }
 
         if ((descriptor.revents & POLLHUP) != 0) {
-            return false;
+            throw std::runtime_error("FIFO peer disconnected");
         }
     }
 }
@@ -83,6 +83,10 @@ bool read_exact(int fd, std::uint8_t* buffer,
 
     while (offset < size) {
         if (!wait_ready(fd, POLLIN, deadline)) {
+            if (offset != 0) {
+                throw std::runtime_error("incomplete FIFO frame");
+            }
+
             return false;
         }
 
@@ -96,7 +100,7 @@ bool read_exact(int fd, std::uint8_t* buffer,
         }
 
         if (count == 0) {
-            return false;
+            throw std::runtime_error("FIFO peer disconnected");
         }
 
         if (errno == EINTR || errno == EAGAIN) {
@@ -264,9 +268,9 @@ bool FifoConnection::read(std::vector<std::uint8_t>& frame) {
     frame.resize(length);
 
     if (!read_exact(receive_fd_, frame.data(),
-                    frame.size(), deadline)) {
+                frame.size(), deadline)) {
         frame.clear();
-        return false;
+        throw std::runtime_error("FIFO frame body timed out");
     }
 
     return true;

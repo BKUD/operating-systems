@@ -1,4 +1,5 @@
 #include "chat_endpoint.h"
+#include "process_manager.h"
 
 #include <chrono>
 #include <cstdint>
@@ -288,6 +289,85 @@ void test_inactivity() {
     );
 }
 
+    void test_semaphore_message_ordering() {
+    SharedSemaphores sync;
+
+    MemoryConnection::Queue host_to_client;
+    MemoryConnection::Queue client_to_host;
+
+    MemoryConnection host_connection(
+        client_to_host, host_to_client
+    );
+
+    MemoryConnection client_connection(
+        host_to_client, client_to_host
+    );
+
+    ChatEndpoint host(
+        host_connection,
+        Participant::Host,
+        ChatEndpoint::Clock::now(),
+        &sync
+    );
+
+    ChatEndpoint client(
+        client_connection,
+        Participant::Client,
+        ChatEndpoint::Clock::now(),
+        &sync
+    );
+
+    require(
+        host.send(MessageKind::Broadcast, "First"),
+        "host sends first message"
+    );
+
+    require(
+        client.receive().has_value(),
+        "client receives first message"
+    );
+
+    require(
+        host.send(MessageKind::Broadcast, "Second"),
+        "host sends second message after acknowledgment"
+    );
+
+    require(
+        client.receive().has_value(),
+        "client receives second message"
+    );
+
+    require(
+        client.send(MessageKind::Private, "First reply"),
+        "client sends first reply"
+    );
+
+    require(
+        host.receive().has_value(),
+        "host receives first reply"
+    );
+
+    require(
+        client.send(MessageKind::Private, "Second reply"),
+        "client sends second reply after acknowledgment"
+    );
+
+    require(
+        host.receive().has_value(),
+        "host receives second reply"
+    );
+
+    require(
+        host.history().size() == 4,
+        "host stores all four messages"
+    );
+
+    require(
+        client.history().size() == 4,
+        "client stores all four messages"
+    );
+}
+
 } // namespace
 
 int main() {
@@ -296,6 +376,7 @@ int main() {
         test_empty_and_failed_messages();
         test_invalid_incoming_message();
         test_inactivity();
+        test_semaphore_message_ordering();
 
         std::cout << "Chat endpoint tests passed\n";
         return 0;
