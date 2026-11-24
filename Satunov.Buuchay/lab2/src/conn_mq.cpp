@@ -2,7 +2,9 @@
 
 #include "chat_message.h"
 #include "transport_name.h"
+#include "connection_factory.h"
 
+#include <memory>
 #include <array>
 #include <cerrno>
 #include <ctime>
@@ -202,4 +204,9 @@ bool MqConnection::write(
 
         fail("mq_timedsend");
     }
+}
+
+std::unique_ptr<Conn>
+make_connection(pid_t host_pid, bool create) {
+    return std::make_unique<MqConnection>(host_pid, create);
 }

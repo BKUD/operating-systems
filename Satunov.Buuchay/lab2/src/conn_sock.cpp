@@ -2,7 +2,9 @@
 
 #include "chat_message.h"
 #include "transport_name.h"
+#include "connection_factory.h"
 
+#include <memory>
 #include <array>
 #include <cerrno>
 #include <chrono>
@@ -463,4 +465,9 @@ bool SocketConnection::write(
     }
 
     return sent;
+}
+
+std::unique_ptr<Conn>
+make_connection(pid_t host_pid, bool create) {
+    return std::make_unique<SocketConnection>(host_pid, create);
 }

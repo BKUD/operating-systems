@@ -2,7 +2,9 @@
 
 #include "chat_message.h"
 #include "transport_name.h"
+#include "connection_factory.h"
 
+#include <memory>
 #include <array>
 #include <cerrno>
 #include <chrono>
@@ -292,4 +294,9 @@ bool FifoConnection::write(std::span<const std::uint8_t> frame) {
     ) && write_all(
         send_fd_, frame.data(), frame.size(), deadline
     );
+}
+
+std::unique_ptr<Conn>
+make_connection(pid_t host_pid, bool create) {
+    return std::make_unique<FifoConnection>(host_pid, create);
 }

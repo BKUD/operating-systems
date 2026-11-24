@@ -209,3 +209,27 @@ int ChildProcess::wait() {
 
     return status;
 }
+
+std::optional<int> ChildProcess::try_wait() {
+    if (pid_ <= 0) {
+        throw std::logic_error("child already reaped");
+    }
+
+    int status = 0;
+    pid_t result;
+
+    do {
+        result = waitpid(pid_, &status, WNOHANG);
+    } while (result == -1 && errno == EINTR);
+
+    if (result == 0) {
+        return std::nullopt;
+    }
+
+    if (result == -1) {
+        throw_system_error("waitpid(WNOHANG)");
+    }
+
+    pid_ = -1;
+    return status;
+}

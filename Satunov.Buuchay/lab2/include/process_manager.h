@@ -2,6 +2,8 @@
 
 #include <sys/types.h>
 
+ #include <optional>
+
 class SharedSemaphores {
 public:
     SharedSemaphores();
@@ -25,6 +27,8 @@ private:
 
 class ChildProcess {
 public:
+    [[nodiscard]] std::optional<int> try_wait();
+
     using Entry = int (*)(void*);
 
     static ChildProcess spawn(Entry entry, void* context);
