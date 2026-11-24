@@ -202,3 +202,24 @@ if(BUILD_TESTING)
             PROPERTIES TIMEOUT 20
     )
 endif()
+
+if(BUILD_TESTING)
+    add_executable(chat_session_tests
+            tests/test_chat_session.cpp
+            src/chat_session.cpp
+            src/chat_message.cpp
+    )
+
+    target_include_directories(chat_session_tests
+            PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    )
+
+    target_compile_options(chat_session_tests
+            PRIVATE -Wall -Wextra -Werror
+    )
+
+    add_test(
+            NAME chat_session_tests
+            COMMAND chat_session_tests
+    )
+endif()
