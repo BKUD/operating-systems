@@ -4,9 +4,7 @@ all:
 	./build.sh
 
 test:
-	cmake -S . -B build
-	cmake --build build --parallel
-	ctest --test-dir build --output-on-failure
+	./build.sh --test
 
 clean:
 	rm -rf build

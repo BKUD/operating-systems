@@ -3,6 +3,7 @@
 #include "process_manager.h"
 
 #include <cerrno>
+#include <chrono>
 #include <fcntl.h>
 #include <iostream>
 #include <mqueue.h>
@@ -11,6 +12,7 @@
 #include <string_view>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <vector>
 
 namespace {
 
@@ -45,7 +47,6 @@ int client_main(void* context) {
     }
 
     const auto incoming = chat::deserialize(frame);
-
     if (!incoming ||
         incoming->sender != chat::Participant::Host ||
         incoming->text != "Hello from host") {
@@ -152,7 +153,6 @@ void test_exchange() {
         queue_name.c_str(),
         O_RDONLY
     );
-
     const int open_error = errno;
 
     if (descriptor != static_cast<mqd_t>(-1)) {
@@ -166,13 +166,50 @@ void test_exchange() {
     );
 }
 
+void test_full_queue_is_nonblocking() {
+    const auto host_pid = getpid();
+    MqConnection host(host_pid, true);
+    MqConnection client(host_pid, false);
+
+    const chat::ChatMessage message{
+        chat::MessageKind::Broadcast,
+        chat::Participant::Host,
+        chat::Participant::All,
+        123,
+        "Queue capacity test"
+    };
+
+    const auto frame = chat::serialize(message);
+    require(frame.has_value(), "test message must serialize");
+
+    // The MQ transport configures a capacity of eight messages.
+    for (int index = 0; index < 8; ++index) {
+        require(host.write(*frame), "enqueue within capacity");
+    }
+
+    const auto started = std::chrono::steady_clock::now();
+    const bool ninth_sent = host.write(*frame);
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+
+    require(!ninth_sent, "full queue must reject a ninth message");
+    require(
+        elapsed < std::chrono::seconds(2),
+        "full queue must not block the write operation"
+    );
+
+    std::vector<std::uint8_t> received;
+    require(client.read(received), "client drains one queued message");
+    require(received == *frame, "client receives the expected frame");
+    require(host.write(*frame), "writing resumes when space is free");
+}
+
 } // namespace
 
 int main() {
     try {
         test_exchange();
-
-        std::cout << "MQ integration test passed\n";
+        test_full_queue_is_nonblocking();
+        std::cout << "MQ integration and capacity tests passed\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "MQ integration test failed: "

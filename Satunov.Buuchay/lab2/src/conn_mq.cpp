@@ -77,7 +77,7 @@ MqConnection::MqConnection(pid_t host_pid, bool create) {
 
             send_ = mq_open(
                 host_to_client_name_.c_str(),
-                O_CREAT | O_EXCL | O_WRONLY,
+                O_CREAT | O_EXCL | O_WRONLY | O_NONBLOCK,
                 0600,
                 &attributes
             );
@@ -99,7 +99,7 @@ MqConnection::MqConnection(pid_t host_pid, bool create) {
 
             send_ = mq_open(
                 client_to_host_name_.c_str(),
-                O_WRONLY
+                O_WRONLY | O_NONBLOCK
             );
 
             if (send_ == static_cast<mqd_t>(-1)) {
@@ -141,7 +141,6 @@ void MqConnection::cleanup() noexcept {
 bool MqConnection::read(
     std::vector<std::uint8_t>& frame
 ) {
-
     frame.clear();
 
     std::array<std::uint8_t, kMaxFrameBytes> buffer{};
@@ -184,15 +183,13 @@ bool MqConnection::write(
         return false;
     }
 
-    const timespec deadline = deadline_in_five_seconds();
-
+    // O_NONBLOCK ensures a full queue never blocks the caller.
     for (;;) {
-        if (mq_timedsend(
+        if (mq_send(
                 send_,
                 reinterpret_cast<const char*>(frame.data()),
                 frame.size(),
-                0,
-                &deadline
+                0
             ) == 0) {
             return true;
         }
@@ -201,11 +198,11 @@ bool MqConnection::write(
             continue;
         }
 
-        if (errno == ETIMEDOUT) {
+        if (errno == EAGAIN) {
             return false;
         }
 
-        fail("mq_timedsend");
+        fail("mq_send");
     }
 }
 
